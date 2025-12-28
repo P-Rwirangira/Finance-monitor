@@ -1,0 +1,40 @@
+name: Deploy
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        env: [dev]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY_${{ matrix.env | upper }} }}
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+      - name: Configure Docker auth
+        run: gcloud auth configure-docker us-docker.pkg.dev -q
+      - name: Build and push image
+        run: |
+          IMAGE="us-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID_${{ matrix.env | upper }} }}/gmail-pdf-parser/app:${{ github.ref_name }}"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+      - name: Deploy to Cloud Run (api)
+        run: |
+          gcloud run deploy gmail-pdf-parser-api \
+            --image=us-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID_${{ matrix.env | upper }} }}/gmail-pdf-parser/app:${{ github.ref_name }} \
+            --region=${{ secrets.GCP_REGION_${{ matrix.env | upper }} }} \
+            --platform=managed \
+            --allow-unauthenticated \
+            --set-env-vars=MONGODB_URI=${{ secrets.ATLAS_URI_${{ matrix.env | upper }} }},PDF_PASSWORD=${{ secrets.PDF_PASSWORD_${{ matrix.env | upper }} }},GMAIL_SENDER_WHITELIST=${{ secrets.GMAIL_SENDER_WHITELIST_${{ matrix.env | upper }} }}
