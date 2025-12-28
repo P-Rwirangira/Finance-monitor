@@ -18,7 +18,13 @@ export async function getAuthorizedClient() {
   const oauth2Client = new google.auth.OAuth2(clientId, clientSecret, 'urn:ietf:wg:oauth:2.0:oob');
   try {
     const tokenRaw = await fs.readFile(TOKEN_PATH, 'utf8');
-    oauth2Client.setCredentials(JSON.parse(tokenRaw));
+    const tokens = JSON.parse(tokenRaw);
+    oauth2Client.setCredentials(tokens);
+    oauth2Client.on('tokens', async (t) => {
+      const merged = { ...tokens, ...t, refresh_token: t.refresh_token || tokens.refresh_token };
+      await fs.mkdir(TOKEN_DIR, { recursive: true });
+      await fs.writeFile(TOKEN_PATH, JSON.stringify(merged, null, 2), 'utf8');
+    });
     return oauth2Client;
   } catch {
     await fs.mkdir(TOKEN_DIR, { recursive: true });
@@ -32,11 +38,15 @@ export async function getAuthorizedClient() {
     const { tokens } = await oauth2Client.getToken(authCode);
     oauth2Client.setCredentials(tokens);
     await fs.writeFile(TOKEN_PATH, JSON.stringify(tokens, null, 2), 'utf8');
+    oauth2Client.on('tokens', async (t) => {
+      const merged = { ...tokens, ...t, refresh_token: t.refresh_token || tokens.refresh_token };
+      await fs.writeFile(TOKEN_PATH, JSON.stringify(merged, null, 2), 'utf8');
+    });
     return oauth2Client;
   }
 }
 
-export async function listMessagesWithPdfs(auth: any, opts: { senders: string[]; daysLookback: number; }) {
+export async function listMessagesWithPdfs(auth: any, opts: { senders: string[]; daysLookback: number; maxMessages?: number; pageSize?: number; }) {
   const gmail = google.gmail({ version: 'v1', auth });
   const queryParts: string[] = ['has:attachment', 'filename:pdf'];
   if (opts.senders.length > 0) {
@@ -45,8 +55,19 @@ export async function listMessagesWithPdfs(auth: any, opts: { senders: string[];
   }
   if (opts.daysLookback) queryParts.push(`newer_than:${opts.daysLookback}d`);
   const q = queryParts.join(' ');
-  const res = await gmail.users.messages.list({ userId: 'me', q, maxResults: 50 });
-  return res.data.messages || [];
+  const pageSize = opts.pageSize && opts.pageSize > 0 ? Math.min(opts.pageSize, 500) : 100;
+  let pageToken: string | undefined = undefined;
+  const all: any[] = [];
+  do {
+    const res = await gmail.users.messages.list({ userId: 'me', q, maxResults: pageSize, pageToken });
+    const msgs = res.data.messages || [];
+    all.push(...msgs);
+    pageToken = res.data.nextPageToken || undefined;
+    if (opts.maxMessages && all.length >= opts.maxMessages) {
+      return all.slice(0, opts.maxMessages);
+    }
+  } while (pageToken);
+  return all;
 }
 
 export async function fetchPdfAttachments(auth: any, messageId: string) {
@@ -70,5 +91,9 @@ export async function getMessageReceivedAt(auth: any, messageId: string): Promis
   const msg = await gmail.users.messages.get({ userId: 'me', id: messageId, format: 'metadata', metadataHeaders: ['Date'] });
   const headers = msg.data.payload?.headers || [];
   const dateHeader = headers.find((h) => h.name?.toLowerCase() === 'date')?.value;
-  return dateHeader ? new Date(dateHeader) : new Date();
+  if (dateHeader) {
+    const d = new Date(dateHeader);
+    if (!Number.isNaN(d.getTime())) return d;
+  }
+  return new Date();
 }
