@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
 import pdf from 'pdf-parse';
 
-export async function sha256(buf: Buffer) {
+export function sha256(buf: Buffer) {
   const h = crypto.createHash('sha256');
   h.update(buf);
   return h.digest('hex');
