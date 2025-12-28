@@ -7,13 +7,25 @@ const logger = pino({ name: 'run_ingest' });
 
 async function main() {
   await connectMongo(config.mongodbUri);
-  await runGmailIngestion();
-  logger.info('Ingestion complete');
-  process.exit(0);
+  try {
+    await runGmailIngestion();
+    logger.info('Ingestion complete');
+    process.exitCode = 0;
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error(e);
+    process.exitCode = 1;
+  } finally {
+    const { disconnectMongo } = await import('./db/mongo.js');
+    try {
+      await disconnectMongo();
+      logger.info('MongoDB disconnected');
+    } catch (err) {
+      logger.error({ err }, 'Error disconnecting MongoDB');
+    } finally {
+      process.exit();
+    }
+  }
 }
 
-main().catch((e) => {
-  // eslint-disable-next-line no-console
-  console.error(e);
-  process.exit(1);
-});
+main();
