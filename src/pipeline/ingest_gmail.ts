@@ -14,10 +14,18 @@ export async function runGmailIngestion() {
   logger.info({ count: messages.length }, 'messages to process');
 
   for (const msg of messages) {
-    const receivedAt = await getMessageReceivedAt(auth, msg.id);
-    const atts = await fetchPdfAttachments(auth, msg.id);
-    for (const att of atts) {
-      await processAttachment(msg.id, att, receivedAt, config.pdfPassword);
+    try {
+      const receivedAt = await getMessageReceivedAt(auth, msg.id);
+      const atts = await fetchPdfAttachments(auth, msg.id);
+      for (const att of atts) {
+        try {
+          await processAttachment(msg.id, att, receivedAt, config.pdfPassword);
+        } catch (e) {
+          logger.error({ messageId: msg.id, attachment: att.filename, err: e }, 'attachment processing failed');
+        }
+      }
+    } catch (e) {
+      logger.error({ messageId: msg.id, err: e }, 'message processing failed');
     }
   }
 }
